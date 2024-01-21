@@ -50,7 +50,7 @@ Here is an example of query for fetching only new data from stage.
 ![](/screenshots/6_stream_join.png)
 
 Data from local DB are being inserted with python snawflake connector by regular INSERT statement.
-Now we have all the data brought into snowflake, in a structured way.
+Now we have all the data brought into snowflake, represented in a structured way.
 ![](/screenshots/7_source_data_table.png)
 
 
