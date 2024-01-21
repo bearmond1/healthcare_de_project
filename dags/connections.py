@@ -5,9 +5,9 @@ import snowflake.connector
 source_db_connstr = "mysql+mysqlconnector://root:password@host.docker.internal:3306/healthcare"
 
 # SF
-account = "QXCPTMD-VB14182"
-user = "DEMHCP"
-password = "Qwerty123"
+account = "account-identificator"
+user = "user"
+password = "password"
 warehouse = "WH"
 database = "HEALTHCARE"
 schema = "SOURCE_DATA"
