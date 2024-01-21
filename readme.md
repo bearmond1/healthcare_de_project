@@ -68,6 +68,7 @@ After dimensions in place, we fill our fact table. Here is piece of full view on
 
 ### Views and reports
 We have few view on top of our star schema, some of them speaks for themselves, like avg_hospital_duration_per_season, avg_bill_by_gender, avg_bill_by_season..
+
 ![](/screenshots/11_report4.png)
 
 
