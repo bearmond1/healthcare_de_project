@@ -1,6 +1,6 @@
 # Overview
 
-This is a rather simple data engineering project, which takes artificial medical admissions data and brings it to star schema data mart. Airflow, running in Docker, controls the process, while snowflake serves as a cloud data warehouse. We have 3 layers of data: files with source data, structured source data in snowflake table, and data mart with fact table and dimensions.
+This is a rather simple data engineering project, which takes artificial medical admissions data and brings it to star schema data mart. Airflow, running in Docker, controls ETL process, while snowflake serves as a cloud data warehouse. We have 3 layers of data: files with source data, structured source data in snowflake table, and data mart with fact table and dimensions.
 Following is the process:
 1) Source data is split in two sets of 5 files each, one set is being uploaded in snowflake stage, another one - first in local DB, from there - inserted into snowflake source data table. 
 2) After files being staged on snowflake, runs a procedure, processing new files and writes new data in source data table. 
