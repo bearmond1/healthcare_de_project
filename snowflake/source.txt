@@ -1,0 +1,143 @@
+create or replace TABLE HEALTHCARE.SOURCE_DATA.HC_DATA (
+    ID NUMBER(6,0),
+	AGE NUMBER(38,0),
+	GENDER VARCHAR(10),
+	BLOODTYPE VARCHAR(10),
+	MEDICAL_CONDITION VARCHAR(45),
+	ADMISSION_DATE DATE,
+	HOSPITAL VARCHAR(45),
+	INSURANCE_PROVIDER VARCHAR(45),
+	BILL NUMBER(15,5),
+	ROOM_NUMBER NUMBER(38,0),
+	ADMISSION_TYPE VARCHAR(45),
+	DISCHARGE_DATE DATE,
+	MEDICATION VARCHAR(45),
+	TEST_RESULTS VARCHAR(45),
+	DATA_SOURCE VARCHAR(10),
+    UPLOAD_TS TIMESTAMP_TZ,
+    constraint pk primary key (id)
+)COMMENT='Structured healthcare data from files';
+
+CREATE OR REPLACE SEQUENCE HC_DATA_PK_SEQ START = 0 INCREMENT = 1;
+drop stream HEALTHCARE.SOURCE_DATA.NEW_HC_FILESTREAM;
+create or replace stream HEALTHCARE.SOURCE_DATA.NEW_HC_FILESTREAM on stage HEALTHCARE.SOURCE_DATA.HC_FILES_STAGE;
+select system$stream_has_data('NEW_HC_FILESTREAM');
+DESC STREAM NEW_HC_FILESTREAM;
+select * from NEW_HC_FILESTREAM;
+
+create or replace table holidays_info(
+    date_ date ,
+    holiday_name varchar(45),
+    local_name varchar(45),
+    constraint pk primary key (date_)
+);
+select * from holidays_info;
+
+
+list @HC_FILES_STAGE;
+
+create or replace file format csv_ff
+    type ='CSV'
+    field_optionally_enclosed_by = '"'
+    SKIP_HEADER = 1
+    FIELD_DELIMITER = ',';
+
+select 
+METADATA$FILENAME FILENAME, METADATA$FILE_ROW_NUMBER ROW_NUM, METADATA$FILE_CONTENT_KEY, METADATA$FILE_LAST_MODIFIED, METADATA$START_SCAN_TIME,
+s.$1 , s.$2, s.$3, s.$4, s.$5, s.$6, s.$7, s.$8, s.$9, s.$10, s.$11, s.$12, s.$13, s.$14, s.$15
+from @HC_FILES_STAGE 
+(file_format => csv_ff) s;
+
+select *
+from directory(@HC_FILES_STAGE);
+
+
+select 
+METADATA$FILENAME FILENAME, METADATA$FILE_ROW_NUMBER ROW_NUM, METADATA$FILE_CONTENT_KEY, METADATA$FILE_LAST_MODIFIED, METADATA$START_SCAN_TIME,
+s.$1 , s.$2, s.$3, s.$4, s.$5, s.$6, s.$7, s.$8, s.$9, s.$10, s.$11, s.$12, s.$13, s.$14, s.$15
+from @HC_FILES_STAGE 
+(file_format => csv_ff) s
+join NEW_HC_FILESTREAM nfs on
+    nfs.relative_path = filename and
+    METADATA$ACTION = 'INSERT'
+limit 10;
+
+
+select 
+METADATA$FILENAME FILENAME, METADATA$FILE_ROW_NUMBER ROW_NUM, METADATA$FILE_CONTENT_KEY, METADATA$FILE_LAST_MODIFIED, METADATA$START_SCAN_TIME,
+s.$1 , s.$2, s.$3, s.$4, s.$5, s.$6, s.$7, s.$8, s.$9, s.$10, s.$11, s.$12, s.$13, s.$14, s.$15
+from @HC_FILES_STAGE 
+(file_format => csv_ff) s
+;
+
+
+create or replace task load_hc_data_from_stage
+    warehouse = 'wh'
+    when system$stream_has_data('NEW_HC_FILESTREAM')
+    as  
+    INSERT into HC_DATA(ID, AGE, GENDER, BLOODTYPE, MEDICAL_CONDITION, ADMISSION_DATE, HOSPITAL, INSURANCE_PROVIDER, BILL, ROOM_NUMBER, ADMISSION_TYPE, DISCHARGE_DATE,         MEDICATION, TEST_RESULTS, DATA_SOURCE, UPLOAD_TS)
+    select
+        HC_DATA_PK_SEQ.nextval, s.$2, s.$3, s.$4, s.$5, s.$6, s.$8, s.$9, s.$10, s.$11, s.$12, s.$13, s.$14, s.$15, 'file', CURRENT_TIMESTAMP()::TIMESTAMP_TZ
+    from @HC_FILES_STAGE 
+    (file_format => csv_ff) s
+    join NEW_HC_FILESTREAM nfs on
+        nfs.relative_path = METADATA$FILENAME and
+        METADATA$ACTION = 'INSERT'
+    ;
+execute task load_hc_data_from_stage ;
+
+select CURRENT_TIMESTAMP()::TIMESTAMP_NTZ ;
+select * from hc_data order by upload_ts desc;
+truncate hc_data;
+
+
+insert into HEALTHCARE.SOURCE_DATA.HC_DATA(ID,Age,Gender,Bloodtype,Medical_Condition,Admission_date,Hospital,Insurance_Provider,Bill,Room_Number,Admission_Type,Discharge_Date,Medication,Test_Results,DATA_SOURCE,UPLOAD_TS)
+values (HEALTHCARE.SOURCE_DATA.HC_DATA_PK_SEQ.nextval,35, 'Male','O+','Asthma','2023-06-01','Burke, Griffin and Cooper','UnitedHealthcare',47304.06485,404,'Emergency','2023-06-15','Lipitor','Normal','database' ,'2024-01-08 16:29:22');
+
+
+CREATE OR REPLACE PROCEDURE load_hc_data_from_stage()
+  RETURNS boolean
+  LANGUAGE SQL
+  AS
+  $$    
+      INSERT into HC_DATA(ID, AGE, GENDER, BLOODTYPE, MEDICAL_CONDITION, ADMISSION_DATE, HOSPITAL, INSURANCE_PROVIDER, BILL, ROOM_NUMBER, ADMISSION_TYPE, DISCHARGE_DATE,         MEDICATION, TEST_RESULTS, DATA_SOURCE, UPLOAD_TS)
+    select
+        HC_DATA_PK_SEQ.nextval, s.$2, s.$3, s.$4, s.$5, s.$6, s.$8, s.$9, s.$10, s.$11, s.$12, s.$13, s.$14, s.$15, 'file', CURRENT_TIMESTAMP()::TIMESTAMP_TZ
+    from @HC_FILES_STAGE 
+    (file_format => csv_ff) s
+    join NEW_HC_FILESTREAM nfs on
+        nfs.relative_path = METADATA$FILENAME and
+        METADATA$ACTION = 'INSERT';   
+  $$
+  ;
+
+  call load_hc_data_from_stage();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,760 @@
+create or replace table hospital_dim (
+    id int,
+    hospital_name varchar(50),
+    constraint pk primary key (id)
+);
+create sequence hospital_dim_pk_seq start = 0 increment = 1;
+
+create stream hospital_dim_stream on table healthcare.source_data.hc_data;
+
+CREATE OR REPLACE PROCEDURE UPDATE_HOSPITAL_DIM()
+  RETURNS boolean
+  LANGUAGE SQL
+  AS
+  $$    
+ INSERT into hospital_dim(id,hospital_name)
+ select 
+    hospital_dim_pk_seq.nextval, 
+    Hospital
+ from 
+    ( select Hospital 
+      from hospital_dim_stream nrs
+      where
+            METADATA$ACTION = 'INSERT' and
+            not Hospital in (select hospital_name from hospital_dim)
+        group by Hospital ) dhv
+    ;
+  $$
+  ;
+
+call UPDATE_HOSPITAL_DIM();
+
+
+
+
+
+
+
+
+
+create table bloodtype_dim (
+    id int,
+    full_bloodtype varchar(10),
+    abo varchar(2),
+    rh varchar(1),
+    constraint pk primary key (id)
+);
+create sequence btdim_pk_seq start = 0 increment = 1;
+
+create stream bt_dim_stream on table healthcare.source_data.hc_data;
+
+CREATE OR REPLACE PROCEDURE UPDATE_Bloodtype_DIM()
+  RETURNS boolean
+  LANGUAGE SQL
+  AS
+  $$    
+      INSERT into bloodtype_dim(ID, full_bloodtype, abo, rh)
+ select 
+    btdim_pk_seq.nextval, 
+    bloodtype,
+    left(bloodtype, length(bloodtype)-1),
+    right(bloodtype, 1)    
+ from 
+    ( select bloodtype 
+      from bt_dim_stream nrs
+      where
+            METADATA$ACTION = 'INSERT' and
+            not bloodtype in (select full_bloodtype from bloodtype_dim)
+        group by bloodtype ) dbtv
+    ;
+  $$
+  ;
+
+call UPDATE_Bloodtype_DIM();
+select * from bloodtype_dim;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+create schema HEALTHCARE.mart;
+use schema mart;
+create or replace stream dd_new_records on table HEALTHCARE.source_data.HC_DATA;
+drop stream HEALTHCARE.mart.dd_new_records;
+select system$stream_has_data('HEALTHCARE.mart.dd_new_records');
+select * from HEALTHCARE.mart.dd_new_records;
+
+create or replace table DATE_DIM (
+    id NUMBER(6,0),
+    date_ DATE,
+    day_of_week varchar(10),
+    week_number int,
+    day_number int,
+    year_quarter int,
+    season varchar(10),
+    BUISNESS_DAY_FLAG boolean,
+    holiday_flag boolean,
+    major_event_flag boolean,
+    major_event varchar(100),
+    recent_major_event date,
+    constraint pk primary key (id)
+);
+
+select * from HEALTHCARE.source_data.hc_data;
+select * from DATE_DIM;
+truncate date_dim;
+
+CREATE OR REPLACE SEQUENCE DD_PK_SEQ START = 0 INCREMENT = 1;
+
+drop procedure season( date);
+CREATE OR REPLACE function season(date_ date)
+  RETURNS STRING
+  LANGUAGE PYTHON
+  RUNTIME_VERSION = 3.8
+  HANDLER = 'check'
+  PACKAGES = ('snowflake-snowpark-python')
+AS $$
+def check(date_):
+    if date_.month in [1,2,12]:
+        return 'WINTER'
+    elif date_.month in [3,4,5]:
+        return 'SPRING'
+    elif date_.month in [6,7,8]:
+        return 'SUMMER'
+    elif date_.month in [9,10,11]:
+        return 'AUTUMN'
+$$;
+select season('2024-04-08');
+
+drop procedure is_holyday( date);
+
+select is_holyday('2024-04-08');
+select season('2024-04-08');
+
+execute task UPDATE_DATE_DIM;
+select * from DATE_DIM;
+create or replace task UPDATE_DATE_DIM
+    warehouse = 'wh'
+    schedule = 'using cron 0 1 1 JAN * UTC'
+    when system$stream_has_data('HEALTHCARE.MART.dd_new_records')
+    as
+    INSERT into DATE_DIM(ID, DATE_, DAY_OF_WEEK, WEEK_NUMBER, DAY_NUMBER, YEAR_QUARTER, SEASON, BUISNESS_DAY_FLAG, HOLIDAY_FLAG, MAJOR_EVENT_FLAG, MAJOR_EVENT, RECENT_MAJOR_EVENT)
+
+ select
+       DD_PK_SEQ.nextval, ADMISSION_DATE as date_, DAYNAME(ADMISSION_DATE), WEEKOFYEAR(ADMISSION_DATE), DAYOFYEAR(ADMISSION_DATE), QUARTER(ADMISSION_DATE), HEALTHCARE.mart.SEASON(ADMISSION_DATE),
+       case        
+            when (ADMISSION_DATE in (select date_ from HEALTHCARE.SOURCE_DATA.HOLIDAYS_INFO)) or
+                DAYNAME(ADMISSION_DATE) in ('Sat', 'Sun')
+            then false
+            else true
+        end as BUISNESS_DAY_FLAG,
+        case        
+            when (ADMISSION_DATE in (select date_ from HEALTHCARE.SOURCE_DATA.HOLIDAYS_INFO)) or
+                DAYNAME(ADMISSION_DATE) in ('Sat', 'Sun')
+            then true
+            else false
+        end as HOLIDAY_FLAG,
+        false as MAJOR_EVENT_FLAG,
+        null as MAJOR_EVENT,
+        null as RECENT_MAJOR_EVENT
+    from 
+    (   select ADMISSION_DATE 
+        from dd_new_records nrs
+        where
+            METADATA$ACTION = 'INSERT' and
+            ADMISSION_DATE not in (select date_ from DATE_DIM)
+        group by ADMISSION_DATE ) dad
+
+    union
+
+    select
+       DD_PK_SEQ.nextval, DISCHARGE_DATE as DATE_, DAYNAME(DISCHARGE_DATE), WEEKOFYEAR(DISCHARGE_DATE), DAYOFYEAR(DISCHARGE_DATE), QUARTER(DISCHARGE_DATE), HEALTHCARE.mart.SEASON(DISCHARGE_DATE),
+       case        
+            when (DISCHARGE_DATE in (select date_ from HEALTHCARE.SOURCE_DATA.HOLIDAYS_INFO)) or
+                DAYNAME(DISCHARGE_DATE) in ('Sat', 'Sun')
+            then false
+            else true
+        end as BUISNESS_DAY_FLAG,
+        case        
+            when (DISCHARGE_DATE in (select date_ from HEALTHCARE.SOURCE_DATA.HOLIDAYS_INFO)) or
+                DAYNAME(DISCHARGE_DATE) in ('Sat', 'Sun')
+            then true
+            else false
+        end as HOLIDAY_FLAG,
+        false as MAJOR_EVENT_FLAG,
+        null as MAJOR_EVENT,
+        null as RECENT_MAJOR_EVENT
+    from
+    (   select DISCHARGE_DATE 
+        from dd_new_records nrs
+        where
+            METADATA$ACTION = 'INSERT' and
+            DISCHARGE_DATE not in (select date_ from DATE_DIM) and
+            DISCHARGE_DATE not in (select ADMISSION_DATE from dd_new_records) 
+        group by DISCHARGE_DATE ) ddd
+    ;
+
+
+
+CREATE OR REPLACE PROCEDURE UPDATE_DATE_DIM()
+  RETURNS boolean
+  LANGUAGE SQL
+  AS
+  $$    
+      INSERT into DATE_DIM(ID, DATE_, DAY_OF_WEEK, WEEK_NUMBER, DAY_NUMBER, YEAR_QUARTER, SEASON, BUISNESS_DAY_FLAG, HOLIDAY_FLAG, MAJOR_EVENT_FLAG, MAJOR_EVENT, RECENT_MAJOR_EVENT)
+
+ select
+       DD_PK_SEQ.nextval, ADMISSION_DATE as date_, DAYNAME(ADMISSION_DATE), WEEKOFYEAR(ADMISSION_DATE), DAYOFYEAR(ADMISSION_DATE), QUARTER(ADMISSION_DATE), HEALTHCARE.mart.SEASON(ADMISSION_DATE),
+       case        
+            when (ADMISSION_DATE in (select date_ from HEALTHCARE.SOURCE_DATA.HOLIDAYS_INFO)) or
+                DAYNAME(ADMISSION_DATE) in ('Sat', 'Sun')
+            then false
+            else true
+        end as BUISNESS_DAY_FLAG,
+        case        
+            when (ADMISSION_DATE in (select date_ from HEALTHCARE.SOURCE_DATA.HOLIDAYS_INFO)) or
+                DAYNAME(ADMISSION_DATE) in ('Sat', 'Sun')
+            then true
+            else false
+        end as HOLIDAY_FLAG,
+        false as MAJOR_EVENT_FLAG,
+        null as MAJOR_EVENT,
+        null as RECENT_MAJOR_EVENT
+    from 
+    (   select ADMISSION_DATE 
+        from dd_new_records nrs
+        where
+            METADATA$ACTION = 'INSERT' and
+            ADMISSION_DATE not in (select date_ from DATE_DIM)
+        group by ADMISSION_DATE ) dad
+
+    union
+
+    select
+       DD_PK_SEQ.nextval, DISCHARGE_DATE as DATE_, DAYNAME(DISCHARGE_DATE), WEEKOFYEAR(DISCHARGE_DATE), DAYOFYEAR(DISCHARGE_DATE), QUARTER(DISCHARGE_DATE), HEALTHCARE.mart.SEASON(DISCHARGE_DATE),
+       case        
+            when (DISCHARGE_DATE in (select date_ from HEALTHCARE.SOURCE_DATA.HOLIDAYS_INFO)) or
+                DAYNAME(DISCHARGE_DATE) in ('Sat', 'Sun')
+            then false
+            else true
+        end as BUISNESS_DAY_FLAG,
+        case        
+            when (DISCHARGE_DATE in (select date_ from HEALTHCARE.SOURCE_DATA.HOLIDAYS_INFO)) or
+                DAYNAME(DISCHARGE_DATE) in ('Sat', 'Sun')
+            then true
+            else false
+        end as HOLIDAY_FLAG,
+        false as MAJOR_EVENT_FLAG,
+        null as MAJOR_EVENT,
+        null as RECENT_MAJOR_EVENT
+    from
+    (   select DISCHARGE_DATE 
+        from dd_new_records nrs
+        where
+            METADATA$ACTION = 'INSERT' and
+            DISCHARGE_DATE not in (select date_ from DATE_DIM) and
+            DISCHARGE_DATE not in (select ADMISSION_DATE from dd_new_records) 
+        group by DISCHARGE_DATE ) ddd
+    ;
+  $$
+  ;
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+create table gender_dim (
+    id int,
+    gender varchar(10),
+    constraint pk primary key (id)
+);
+create sequence gender_dim_pl_seq start = 0 increment = 1;
+create or replace stream gd_new_records_stream on table HEALTHCARE.source_data.HC_DATA;
+
+
+execute task UPDATE_GENDER_DIM;
+select * from gender_dim;
+
+create or replace task UPDATE_GENDER_DIM
+    warehouse = 'wh'
+    schedule = 'using cron 0 1 1 JAN * UTC'
+    when system$stream_has_data('HEALTHCARE.MART.gd_new_records_stream')
+    as
+    INSERT into gender_dim(ID, gender)
+ select gender_dim_pl_seq.nextval, gender
+ from 
+    (   select gender 
+        from gd_new_records_stream nrs
+        where
+            METADATA$ACTION = 'INSERT' and
+            not gender in (select gender from gender_dim)
+        group by gender ) dgv
+;
+
+
+CREATE OR REPLACE PROCEDURE UPDATE_GENDER_DIM()
+  RETURNS boolean
+  LANGUAGE SQL
+  AS
+  $$    
+      INSERT into gender_dim(ID, gender)
+ select gender_dim_pl_seq.nextval, gender
+ from 
+    (   select gender 
+        from gd_new_records_stream nrs
+        where
+            METADATA$ACTION = 'INSERT' and
+            not gender in (select gender from gender_dim)
+        group by gender ) dgv
+    ;
+  $$
+  ;
+
+
+
+
+
+
+
+
+
+create table med_condition_dim (
+    id int,
+    MEDICAL_CONDITION varchar(50),
+    constraint pk primary key (id)
+);
+create sequence mcdim_pk_seq start = 0 increment = 1;
+
+create stream mc_dim_stream on table healthcare.source_data.hc_data;
+
+CREATE OR REPLACE PROCEDURE UPDATE_MED_CONDITION_DIM()
+  RETURNS boolean
+  LANGUAGE SQL
+  AS
+  $$    
+ INSERT into med_condition_dim(ID, MEDICAL_CONDITION)
+ select 
+    mcdim_pk_seq.nextval, 
+    MEDICAL_CONDITION
+ from 
+    ( select MEDICAL_CONDITION 
+      from mc_dim_stream nrs
+      where
+            METADATA$ACTION = 'INSERT' and
+            not MEDICAL_CONDITION in (select MEDICAL_CONDITION from med_condition_dim)
+        group by MEDICAL_CONDITION ) dbtv
+    ;
+  $$
+  ;
+
+call UPDATE_MED_CONDITION_DIM();
+select * from med_condition_dim;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+create table insurance_provider_dim (
+    id int,
+    insurance_provider varchar(20),
+    constraint pk primary key (id)
+);
+create sequence insurance_provider_dim_pk_seq start = 0 increment = 1;
+
+create stream insurance_provider_dim_stream on table healthcare.source_data.hc_data;
+
+CREATE OR REPLACE PROCEDURE UPDATE_insurance_provider_DIM()
+  RETURNS boolean
+  LANGUAGE SQL
+  AS
+  $$    
+ INSERT into insurance_provider_dim(id,insurance_provider)
+ select 
+    insurance_provider_dim_pk_seq.nextval, 
+    insurance_provider
+ from 
+    ( select insurance_provider 
+      from insurance_provider_dim_stream nrs
+      where
+            METADATA$ACTION = 'INSERT' and
+            not insurance_provider in (select insurance_provider from insurance_provider_dim)
+        group by insurance_provider ) dhv
+    ;
+  $$
+  ;
+
+call UPDATE_insurance_provider_DIM();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+create table admission_type_dim (
+    id int,
+    admission_type varchar(20),
+    constraint pk primary key (id)
+);
+create sequence admission_type_dim_pk_seq start = 0 increment = 1;
+
+create stream admission_type_dim_stream on table healthcare.source_data.hc_data;
+
+CREATE OR REPLACE PROCEDURE UPDATE_admission_type_DIM()
+  RETURNS boolean
+  LANGUAGE SQL
+  AS
+  $$    
+ INSERT into admission_type_dim(id,admission_type)
+ select 
+    admission_type_dim_pk_seq.nextval, 
+    admission_type
+ from 
+    ( select admission_type 
+      from admission_type_dim_stream nrs
+      where
+            METADATA$ACTION = 'INSERT' and
+            not admission_type in (select admission_type from admission_type_dim)
+        group by admission_type ) dhv
+    ;
+  $$
+  ;
+
+call UPDATE_admission_type_DIM();
+
+
+
+
+
+
+
+
+
+
+
+
+
+create table medication_dim (
+    id int,
+    medication varchar(20),
+    constraint pk primary key (id)
+);
+create sequence medication_dim_pk_seq start = 0 increment = 1;
+
+create stream medication_dim_stream on table healthcare.source_data.hc_data;
+
+CREATE OR REPLACE PROCEDURE UPDATE_medication_DIM()
+  RETURNS boolean
+  LANGUAGE SQL
+  AS
+  $$    
+ INSERT into medication_dim(id,medication)
+ select 
+    medication_dim_pk_seq.nextval, 
+    medication
+ from 
+    ( select medication 
+      from medication_dim_stream nrs
+      where
+            METADATA$ACTION = 'INSERT' and
+            not medication in (select medication from medication_dim)
+        group by medication ) dhv
+    ;
+  $$
+  ;
+
+call UPDATE_medication_DIM();
+
+
+
+
+
+
+
+
+create table Test_Results_dim (
+    id int,
+    Test_Results varchar(20),
+    constraint pk primary key (id)
+);
+create sequence Test_Results_dim_pk_seq start = 0 increment = 1;
+
+create stream Test_Results_dim_stream on table healthcare.source_data.hc_data;
+
+CREATE OR REPLACE PROCEDURE UPDATE_Test_Results_DIM()
+  RETURNS boolean
+  LANGUAGE SQL
+  AS
+  $$    
+ INSERT into Test_Results_dim(id,Test_Results)
+ select 
+    Test_Results_dim_pk_seq.nextval, 
+    Test_Results
+ from 
+    ( select Test_Results 
+      from Test_Results_dim_stream nrs
+      where
+            METADATA$ACTION = 'INSERT' and
+            not Test_Results in (select Test_Results from Test_Results_dim)
+        group by Test_Results ) dhv
+    ;
+  $$
+  ;
+
+call UPDATE_Test_Results_DIM();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        

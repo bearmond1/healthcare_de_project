@@ -1,0 +1,276 @@
+select * from medical_admissions_fact_table;
+
+create or replace table medical_admissions_fact_table (
+    id int constraint pk primary key,
+    gender_key int constraint fk_gender foreign key references gender_dim(id),    
+    bloodtype_key int constraint fk_bloodtype foreign key references blootype_dim(id),
+    medical_condition_key int constraint fk_medical_condition foreign key references med_condition_dim(id),
+    admission_date_key NUMBER(6,0) constraint fk_adm_date_key foreign key references date_dim(id),
+    hospital_key int constraint fk_hospital_key foreign key references hospital_dim(id),
+    insurance_provider int constraint fk_insurance_provider_key foreign key references insurance_provider_dim(id),
+    admission_type_key int constraint fk_admission_type_key foreign key references admission_type_dim(id),
+    discharge_date_key NUMBER(6,0) constraint fk_disch_date_key foreign key references date_dim(id),
+    medication_key int constraint fk_medication_key foreign key references medication_dim(id),
+    test_results_key int constraint fk_test_results_key foreign key references Test_Results_dim(id),
+    age int,
+    billing_amount float,
+    room_number int
+);
+create sequence medical_admissions_fact_table_pk_seq start = 0 increment 1;
+create stream medical_admissions_fact_table_stream on table HEALTHCARE.SOURCE_DATA.HC_DATA;
+
+CREATE OR REPLACE PROCEDURE UPDATE_FACT_TABLE()
+  RETURNS boolean
+  LANGUAGE SQL
+  AS
+  $$    
+    INSERT into medical_admissions_fact_table(ID, GENDER_KEY, BLOODTYPE_KEY, MEDICAL_CONDITION_KEY, ADMISSION_DATE_KEY, HOSPITAL_KEY, INSURANCE_PROVIDER, ADMISSION_TYPE_KEY, DISCHARGE_DATE_KEY, MEDICATION_KEY, TEST_RESULTS_KEY, AGE, BILLING_AMOUNT, ROOM_NUMBER)
+    
+    select 
+        medical_admissions_fact_table_pk_seq.nextval id, 
+        gd.id gender_key,
+        bt.id blodtype_key,
+        mcd.id med_cond,
+        ad.id admission_date_key,
+        hd.id hospital_key,
+        ip.id insurance_provider,
+        adt.id admission_type,
+        ddd.id discharge_date,
+        md.id medication,
+        trd.id test_results,
+        nrs.age,
+        nrs.bill,
+        room_number
+     from medical_admissions_fact_table_stream nrs
+     left join gender_dim gd on gd.gender = nrs.gender 
+     left join bloodtype_dim bt on bt.full_bloodtype = nrs.bloodtype 
+     left join med_condition_dim mcd on mcd.medical_condition = nrs.medical_condition
+     left join date_dim ad on ad.date_ = nrs.admission_date
+     left join hospital_dim hd on hd.hospital_name = nrs.hospital
+     left join insurance_provider_dim ip on ip.insurance_provider = nrs.insurance_provider
+     left join admission_type_dim adt on adt.admission_type = nrs.admission_type
+     left join date_dim ddd on ddd.date_ = nrs.discharge_date
+     left join medication_dim md on md.medication = nrs.medication
+     left join test_results_dim trd on trd.test_results = nrs.test_results
+     where METADATA$ACTION = 'INSERT'
+    ;
+  $$
+  ;
+call UPDATE_FACT_TABLE();
+
+
+select 
+        medical_admissions_fact_table_pk_seq.nextval id, 
+        (select id from gender_dim where gender = nrs.gender) gender_key,
+        bt.id blodtype_key,
+        ad.id admission_date_key,
+        hd.id hospital_key,
+        ip.id insurance_provider,
+        adt.id admission_type,
+        ddd.id discharge_date,
+        md.id medication,
+        trd.id test_results,
+        nrs.age,
+        nrs.bill,
+        room_number
+     from medical_admissions_fact_table_stream nrs
+     left join bloodtype_dim bt on bt.full_bloodtype = nrs.bloodtype 
+     left join date_dim ad on ad.date_ = nrs.admission_date
+     left join hospital_dim hd on hd.hospital_name = nrs.hospital
+     left join insurance_provider_dim ip on ip.insurance_provider = nrs.insurance_provider
+     left join admission_type_dim adt on adt.admission_type = nrs.admission_type
+     left join date_dim ddd on ddd.date_ = nrs.discharge_date
+     left join medication_dim md on md.medication = nrs.medication
+     left join test_results_dim trd on trd.test_results = nrs.test_results
+     where METADATA$ACTION = 'INSERT';
+
+drop view full_view;
+create or replace view full_view as (
+    select 
+        ADMISSION_TYPE,
+        FULL_BLOODTYPE, ABO, RH,
+        ad.DATE_ as admission_date, ad.DAY_OF_WEEK, ad.WEEK_NUMBER, ad.DAY_NUMBER, ad.YEAR_QUARTER, ad.SEASON, ad.HOLIDAY_FLAG,
+        dd.date_ as discharge_date,
+        gender,
+        hospital_name,
+        insurance_provider_dim.INSURANCE_PROVIDER,
+        medication,
+        MEDICAL_CONDITION,
+        test_results,
+        age,
+        ft.billing_amount,
+        room_number
+    from medical_admissions_fact_table ft
+    join admission_type_dim on admission_type_dim.id = ft.admission_type_key
+    join bloodtype_dim on bloodtype_dim.id = ft.bloodtype_key
+    join date_dim ad on ad.id = ft.admission_date_key
+    join date_dim dd on dd.id = ft.discharge_date_key
+    join gender_dim on gender_dim.id = ft.gender_key
+    join hospital_dim hd on hd.id = ft.hospital_key
+    join insurance_provider_dim on insurance_provider_dim.id = ft.insurance_provider
+    join medication_dim on medication_dim.id = ft.medication_key
+    join med_condition_dim on med_condition_dim.id = ft.medical_condition_key
+    join test_results_dim on test_results_dim.id = ft.test_results_key
+);
+select * from full_view;
+
+
+create view avg_hospital_duration_per_season as (
+    select season, avg( discharge_date - admission_date ) as avg_duration
+    from full_view
+    group by season
+);
+select * from avg_hospital_duration_per_season;
+
+
+create view avg_bill_by_gender as (
+    select gender, avg( billing_amount) as avg_bill
+    from full_view
+    group by gender
+);
+select * from avg_bill_by_gender;
+
+create view avg_bill_by_season as (
+    select season, avg(billing_amount) as avg_bill
+    from full_view
+    group by season
+);
+
+create view avg_admission_num as (
+    select season, count(*) as num_of_admissions
+    from full_view
+    group by season
+);
+
+create view avg_bill_by_gender as (
+    select gender, avg(billing_amount) as avg_bill
+    from full_view
+    group by gender
+);
+
+create view num_of_admissions_by_bloodtype as (
+    select full_bloodtype, count(*) as num_of_admissions, num_of_admissions::float*100 / (select count(*) from full_view) as percentage
+    from full_view
+    group by full_bloodtype
+);
+select * from num_of_admissions_by_bloodtype;
+
+create view top_three_drugs_by_year as (
+    select year_, medication
+    from (
+    select 
+        year(admission_date) as year_,
+        medication,
+        count(*) as num,
+        row_number() over(partition by year_ order by num desc) as place
+    from full_view as fv
+    group by year_, medication
+    order by year_, num
+    ) v
+    where place < 4
+);
+select * from top_three_drugs_by_year;
+
+create view gender_diseases_by_year as (
+    select 
+        v.gender, 
+        v.medical_condition,
+        year(fv.admission_date) as year,
+        count(*) as num
+    from (
+    select 
+        gender, 
+        medical_condition,  
+        count(*) as num,
+        row_number() over(partition by gender order by num desc) as place
+    from full_view
+    group by gender, medical_condition
+    ) v
+    join full_view fv on 
+        fv.gender = v.gender and
+        fv.medical_condition = v.medical_condition
+    where v.place < 6
+    group by 
+        v.gender, 
+        v.medical_condition,
+        year(fv.admission_date)
+    );
+select * from gender_diseases_by_year;
+
+
+create view best_medications as (
+    select
+        medical_condition,
+        medication,
+        avg( discharge_date - admission_date ) as avg_treatment_duration
+    from full_view
+    where discharge_date > admission_date
+    group by medical_condition, medication
+    order by medical_condition,avg_treatment_duration asc
+);
+
+create or replace view population_age_stucture as (
+    select 
+        gender, 
+        case
+            when mod(age, 10) < 5
+            then age - mod(age, 10)
+            else age + 10 - mod(age, 10)
+        end as age_group,
+        case 
+            when gender = 'Male'
+            then count(*) 
+            else (-1)*count(*)
+        end as num
+    from full_view
+    group by gender, age_group);
+
+select * from population_age_stucture;
+
+
+create or replace view population_age_diseases_stucture as (
+    select 
+        gender, 
+        medical_condition,
+        case
+            when mod(age, 10) < 5
+            then age - mod(age, 10)
+            else age + 10 - mod(age, 10)
+        end as age_group,
+        case 
+            when gender = 'Male'
+            then count(*) 
+            else (-1)*count(*)
+        end as num
+    from full_view
+    group by gender, age_group, medical_condition);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
